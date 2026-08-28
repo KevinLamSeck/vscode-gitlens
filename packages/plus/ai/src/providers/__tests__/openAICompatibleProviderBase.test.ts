@@ -3,6 +3,7 @@ import type { AIModel, AIProviderDescriptor } from '../../models/model.js';
 import type { AIChatMessage, AIChatMessageRole, AIToolCall, AIToolDefinition } from '../../models/provider.js';
 import type { AIProviderContext } from '../context.js';
 import { OpenAICompatibleProviderBase } from '../openAICompatibleProviderBase.js';
+import { createTransport } from './fixtures.js';
 
 const context: AIProviderContext = {
 	fetch: () => Promise.reject(new Error('not used by the serialization hooks')),
@@ -217,5 +218,25 @@ suite('OpenAICompatibleProviderBase tool-call parsing', () => {
 
 	test('returns undefined when the response has no tool calls', () => {
 		assert.strictEqual(provider().calls({ choices: [{ message: { content: 'done' } }] }), undefined);
+	});
+});
+
+suite('OpenAICompatibleProviderBase provider options', () => {
+	// The hook exists for OpenRouter's routing block; every other provider must stay unaffected by it,
+	// so a stray `provider` field can never reach an API that doesn't understand one.
+	test('applyProviderOptions is a no-op by default', async () => {
+		const { context: transport, sent } = createTransport([
+			{ id: 'r1', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' } }] },
+		]);
+
+		await new TestProvider(transport).sendRequest(
+			'generate-commitMessage',
+			{ id: 'gpt-5', name: 'GPT-5', maxTokens: { input: 128000, output: 8192 }, provider: descriptor },
+			'test-key',
+			() => Promise.resolve([{ role: 'user', content: 'hi' }]),
+			{ signal: new AbortController().signal },
+		);
+
+		assert.strictEqual('provider' in sent[0].body, false);
 	});
 });

@@ -176,6 +176,7 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 					this.context.defaultTemperature,
 				),
 			};
+			this.applyProviderOptions(request, model);
 			if (
 				responseFormat != null &&
 				!this.isResponseFormatSessionRejected(model, responseFormat) &&
@@ -206,7 +207,14 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 					responseFormat = undefined;
 					delete request.response_format;
 					delete request.output_config;
-					delete request.provider;
+					// Only `require_parameters` is tied to the response format — the user's routing
+					// preferences must survive the retry
+					if (request.provider != null) {
+						delete request.provider.require_parameters;
+						if (!Object.keys(request.provider).length) {
+							delete request.provider;
+						}
+					}
 					rsp = await this.fetchCore(action, model, apiKey, request, signal, conversationId);
 					errorBody = undefined;
 					// Memoize only when stripping fixed it — proof the format (not e.g. an oversized
@@ -298,6 +306,11 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 	} {
 		return { messages: messages };
 	}
+
+	/** Hook for provider-specific request fields that are independent of the response format
+	 *  (e.g. OpenRouter's provider-routing block). Runs before {@link applyResponseFormat}, which
+	 *  may merge into what this sets. Default is a no-op. */
+	protected applyProviderOptions(_request: ChatCompletionRequest, _model: AIModel<T>): void {}
 
 	/** Whether the given model accepts a native response-format/schema field; when false the
 	 *  prompt's JSON description is the only format control (the request is unchanged).
@@ -601,8 +614,16 @@ export interface ChatCompletionRequest {
 	response_format?: { type: 'json_schema'; json_schema: { name: string; strict: boolean; schema: JSONSchema } };
 	/** Anthropic-native structured output (set only by the Anthropic override) */
 	output_config?: { format: { type: 'json_schema'; schema: JSONSchema } };
-	/** OpenRouter-only routing constraint (set only by the OpenRouter override) */
-	provider?: { require_parameters: boolean };
+	/** OpenRouter-only routing constraints (set only by the OpenRouter overrides) */
+	provider?: {
+		require_parameters?: boolean;
+		allow_fallbacks?: boolean;
+		data_collection?: 'allow' | 'deny';
+		ignore?: string[];
+		only?: string[];
+		order?: string[];
+		sort?: 'price' | 'throughput' | 'latency';
+	};
 }
 
 export interface ChatCompletionResponse {
