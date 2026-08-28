@@ -3,8 +3,8 @@ import { anthropicProviderDescriptor, openAIProviderDescriptor } from '../../con
 import type { AIModel } from '../../models/model.js';
 import type { AIChatMessage, AIChatMessageRole, AIToolDefinition } from '../../models/provider.js';
 import { AnthropicProvider } from '../anthropicProvider.js';
-import type { AIProviderContext } from '../context.js';
 import { OpenAIProvider } from '../openaiProvider.js';
+import { createTransport } from './fixtures.js';
 
 /**
  * End-to-end wire contract for tool calls.
@@ -21,29 +21,6 @@ import { OpenAIProvider } from '../openaiProvider.js';
  * What it deliberately cannot prove: that the vendor *accepts* the payload. These encode our belief
  * about each API's rules; only the live endpoint adjudicates.
  */
-
-/** Captures each outgoing request and replays queued responses in order. */
-function createTransport(responses: unknown[]) {
-	const sent: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] = [];
-	let call = 0;
-
-	const context: AIProviderContext = {
-		fetch: (url: string | URL, init?: RequestInit) => {
-			sent.push({
-				url: String(url),
-				headers: (init?.headers ?? {}) as Record<string, string>,
-				body: JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>,
-			});
-			const body = responses[Math.min(call++, responses.length - 1)];
-			return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
-		},
-		getApiKey: () => Promise.resolve('test-key'),
-		getProviderConfig: () => ({ enabled: true }),
-		getOrPromptUrl: () => Promise.resolve(undefined),
-	};
-
-	return { context: context, sent: sent };
-}
 
 const tools: AIToolDefinition[] = [
 	{
