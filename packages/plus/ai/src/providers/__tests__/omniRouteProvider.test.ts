@@ -133,4 +133,38 @@ suite('OmniRouteProvider Test Suite', () => {
 		const unreachable = createStubProviderContext({ fetch: () => Promise.reject(new Error('ECONNREFUSED')) });
 		assert.strictEqual(await createProvider(unreachable).configured(true), false);
 	});
+
+	test('a 401 from the gateway asks for a key instead of reporting it unreachable', async () => {
+		// A protected gateway is correctly addressed and running — treating its 401 as "could not
+		// connect" strands the user on a URL that was right all along, with no way to supply a key
+		let prompted = false;
+		const { context } = createTransport(
+			[{ status: 401, body: { error: { message: 'unauthorized' } } }, { data: [{ id: 'openai/gpt-5' }] }],
+			{
+				getApiKey: (_config, silent) => {
+					if (silent) return Promise.resolve(undefined);
+
+					prompted = true;
+					return Promise.resolve('supplied-key');
+				},
+			},
+		);
+
+		assert.strictEqual(await createProvider(context).configured(false), true);
+		assert.strictEqual(prompted, true, 'the key prompt must be reached');
+	});
+
+	test('a 401 with no key supplied leaves the provider unconfigured', async () => {
+		const { context } = createTransport([{ status: 401, body: { error: { message: 'unauthorized' } } }], {
+			getApiKey: () => Promise.resolve(undefined),
+		});
+
+		assert.strictEqual(await createProvider(context).configured(false), false);
+	});
+
+	test('a 404 is still reported as unreachable', async () => {
+		const { context } = createTransport([{ status: 404, body: {} }]);
+
+		assert.strictEqual(await createProvider(context).configured(true), false);
+	});
 });

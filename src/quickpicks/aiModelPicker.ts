@@ -146,7 +146,7 @@ const featuredKeyProviders: AIProviders[] = ['openai', 'anthropic', 'gemini', 'o
 // nothing installed, which is actionable — unlike a hosted provider, where it never is.
 const noModelsHints: Partial<Record<AIProviders, string>> = {
 	ollama: l10n.t('Please install a model or check your Ollama server configuration'),
-	omniroute: l10n.t('Please check your OmniRoute gateway URL and that the gateway is running'),
+	omniroute: l10n.t('Please check your OmniRoute gateway URL, that it is running, and its API key if it needs one'),
 };
 
 function getSwitchProviderDetail(providers: readonly AIProviderDescriptor[]): string | undefined {

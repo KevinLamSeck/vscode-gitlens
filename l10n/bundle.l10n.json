@@ -3224,6 +3224,7 @@
 	"Plan ready for review": "Plan ready for review",
 	"Plan ready: {summary}": "Plan ready: {summary}",
 	"Plan: {summary}": "Plan: {summary}",
+	"Please check your OmniRoute gateway URL, that it is running, and its API key if it needs one": "Please check your OmniRoute gateway URL, that it is running, and its API key if it needs one",
 	"Please choose an option to open the repository": "Please choose an option to open the repository",
 	"Please choose where to open the current repository": "Please choose where to open the current repository",
 	"Please choose where to open the repository after cloning": "Please choose where to open the repository after cloning",

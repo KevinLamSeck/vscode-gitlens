@@ -20,8 +20,17 @@ export class OmniRouteProvider extends OpenAICompatibleProviderBase<typeof provi
 		const url = await this.getOrPromptBaseUrl(silent);
 		if (url == null) return false;
 
-		// A key is optional — reachability is the only thing that makes OmniRoute usable
-		return this.validateUrl(url);
+		const reachability = await this.probe(url);
+		if (reachability === 'ok') return true;
+		if (reachability === 'unreachable') return false;
+
+		// The gateway answered, it just wants a key. This is the one place a prompt can't recurse
+		// (`getApiKey` deliberately never prompts), so it's where an unauthenticated probe gets
+		// turned into a request for credentials.
+		const apiKey = await super.getApiKey(silent);
+		if (!apiKey) return false;
+
+		return (await this.probe(url)) === 'ok';
 	}
 
 	/** Never prompts: OmniRoute answers unauthenticated on a fresh self-hosted install, so a
@@ -110,8 +119,10 @@ export class OmniRouteProvider extends OpenAICompatibleProviderBase<typeof provi
 				title: 'Connect to OmniRoute',
 				placeholder: 'Please enter your OmniRoute gateway URL to use this feature',
 				validator: async (u: string) => {
-					const valid = await this.validateUrl(u);
-					return valid ? undefined : 'Could not connect to the OmniRoute gateway. Make sure it is running.';
+					// An unauthenticated gateway is a valid URL — the key is collected separately
+					return (await this.probe(u)) === 'unreachable'
+						? 'Could not reach an OmniRoute gateway at this URL. Make sure it is running.'
+						: undefined;
 				},
 			},
 			silent,
@@ -120,16 +131,20 @@ export class OmniRouteProvider extends OpenAICompatibleProviderBase<typeof provi
 		return url ?? defaultBaseUrl;
 	}
 
-	private async validateUrl(url: string): Promise<boolean> {
+	/** A gateway that answers 401/403 is running and correctly addressed — it just wants a key, which
+	 *  is a different problem from a wrong URL and has to be reported as one. */
+	private async probe(url: string): Promise<'ok' | 'unauthorized' | 'unreachable'> {
 		try {
 			const apiKey = await this.getApiKey(true);
 			const rsp = await this.context.fetch(`${url}/models`, {
 				headers: this.getHeadersCore(apiKey),
 				method: 'GET',
 			});
-			return rsp.ok;
+			if (rsp.ok) return 'ok';
+
+			return rsp.status === 401 || rsp.status === 403 ? 'unauthorized' : 'unreachable';
 		} catch {
-			return false;
+			return 'unreachable';
 		}
 	}
 }
