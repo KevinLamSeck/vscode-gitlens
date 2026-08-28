@@ -12,6 +12,7 @@ import {
 	huggingFaceProviderDescriptor,
 	mistralProviderDescriptor,
 	ollamaProviderDescriptor,
+	omniRouteProviderDescriptor,
 	openAICompatibleProviderDescriptor,
 	openAIProviderDescriptor,
 	openRouterProviderDescriptor,
@@ -327,6 +328,20 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		},
 	],
 	[
+		'omniroute',
+		{
+			...omniRouteProviderDescriptor,
+			type: lazy(
+				async () =>
+					(
+						await loadChunk(
+							() => import(/* webpackChunkName: "ai" */ '@gitlens/ai/providers/omniRouteProvider.js'),
+						)
+					).OmniRouteProvider,
+			),
+		},
+	],
+	[
 		'openrouter',
 		{
 			...openRouterProviderDescriptor,
@@ -548,20 +563,23 @@ export class AIProviderService implements AIService, Disposable {
 				// custom instructions, exclusions) must not invalidate the resolved-model cache and force a
 				// fresh `provider.getModels()` round trip.
 				// A provider's server URL isn't part of a model id, so it can never produce the drift the
-				// compare below looks for and has to invalidate on its own. Ollama only: it's the one provider
-				// whose model list comes FROM that server, so a new URL can disagree about which models exist.
+				// compare below looks for and has to invalidate on its own. Only the providers whose model
+				// list comes FROM that server qualify: a new URL can disagree about which models exist.
 				// The rest ship a static list, where re-resolving provably yields the same model.
-				if (configuration.changed(e, 'ai.ollama.url')) {
-					if (
-						this._model?.provider.id === 'ollama' ||
-						this._modelCache.get('global')?.provider.id === 'ollama'
-					) {
+				for (const [key, id] of [
+					['ai.ollama.url', 'ollama'],
+					['ai.omniroute.url', 'omniroute'],
+				] as const) {
+					if (!configuration.changed(e, key)) continue;
+
+					if (this._model?.provider.id === id || this._modelCache.get('global')?.provider.id === id) {
 						this._modelCache.clear();
-						this._providerModelsCache.delete('ollama');
+						this._providerModelsCache.delete(id);
 						// A different server can disagree about schema support for the same model id
 						clearResponseFormatRejections();
 						this._model = undefined;
 					}
+
 					return;
 				}
 
