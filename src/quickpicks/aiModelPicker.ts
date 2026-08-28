@@ -142,6 +142,13 @@ export async function showAIProviderPicker(
 // detail line; any remaining enabled ones are covered by "and more".
 const featuredKeyProviders: AIProviders[] = ['openai', 'anthropic', 'gemini', 'ollama'];
 
+// Providers served by a user-run endpoint: an empty list means their server is unreachable or has
+// nothing installed, which is actionable — unlike a hosted provider, where it never is.
+const noModelsHints: Partial<Record<AIProviders, string>> = {
+	ollama: l10n.t('Please install a model or check your Ollama server configuration'),
+	omniroute: l10n.t('Please check your OmniRoute gateway URL and that the gateway is running'),
+};
+
 function getSwitchProviderDetail(providers: readonly AIProviderDescriptor[]): string | undefined {
 	const primaries = providers.filter(p => p.primary).map(p => p.name);
 	const keyProviders = providers.filter(p => !p.primary);
@@ -219,10 +226,7 @@ export async function showAIModelPicker(
 	if (!models.length) {
 		items.push({
 			label: l10n.t('No models found'),
-			description:
-				provider === 'ollama'
-					? l10n.t('Please install a model or check your Ollama server configuration')
-					: undefined,
+			description: noModelsHints[provider],
 			iconPath: new ThemeIcon('error'),
 			directive: Directive.Noop,
 		} satisfies ModelQuickPickItem | DirectiveQuickPickItem);

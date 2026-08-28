@@ -9,6 +9,7 @@ export type AIProviders =
 	| 'huggingface'
 	| 'mistral'
 	| 'ollama'
+	| 'omniroute'
 	| 'openai'
 	| 'openaicompatible'
 	| 'openrouter'
@@ -108,6 +109,13 @@ export const openRouterProviderDescriptor: AIProviderDescriptor<'openrouter'> = 
 export const ollamaProviderDescriptor: AIProviderDescriptor<'ollama'> = {
 	id: 'ollama',
 	name: 'Ollama',
+	primary: false,
+	requiresAccount: true,
+	requiresUserKey: false,
+} as const;
+export const omniRouteProviderDescriptor: AIProviderDescriptor<'omniroute'> = {
+	id: 'omniroute',
+	name: 'OmniRoute',
 	primary: false,
 	requiresAccount: true,
 	requiresUserKey: false,
