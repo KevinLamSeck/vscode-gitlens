@@ -43,7 +43,7 @@ import type {
 	AIResponseFormat,
 	AIToolDefinition,
 } from '@gitlens/ai/models/provider.js';
-import type { AIProviderContext } from '@gitlens/ai/providers/context.js';
+import type { AIOpenRouterRouting, AIProviderContext } from '@gitlens/ai/providers/context.js';
 import { clearResponseFormatRejections } from '@gitlens/ai/providers/responseFormatCache.js';
 import { uncommitted, uncommittedStaged } from '@gitlens/git/models/revision.js';
 import { filterDiffFiles } from '@gitlens/git/parsers/diffParser.js';
@@ -660,6 +660,26 @@ export class AIProviderService implements AIService, Disposable {
 
 				const userUrl = configuration.get(`ai.${type}.url` as any) as string | undefined;
 				return { ...orgConfig, url: userUrl || undefined };
+			},
+			getOpenRouterRouting: (): AIOpenRouterRouting | undefined => {
+				const sort = configuration.get('ai.openrouter.providerSort') ?? undefined;
+				const order = configuration.get('ai.openrouter.order');
+				const only = configuration.get('ai.openrouter.only');
+				const ignore = configuration.get('ai.openrouter.ignore');
+				const allowFallbacks = configuration.get('ai.openrouter.allowFallbacks');
+				const dataCollection = configuration.get('ai.openrouter.dataCollection');
+
+				const routing: AIOpenRouterRouting = {
+					...(sort != null ? { sort: sort } : undefined),
+					...(order?.length ? { order: order } : undefined),
+					...(only?.length ? { only: only } : undefined),
+					...(ignore?.length ? { ignore: ignore } : undefined),
+					// Only send the non-default; `true` is OpenRouter's default
+					...(allowFallbacks === false ? { allowFallbacks: false } : undefined),
+					...(dataCollection === 'deny' ? { dataCollection: 'deny' as const } : undefined),
+				};
+
+				return Object.keys(routing).length ? routing : undefined;
 			},
 			getOrPromptUrl: async (
 				providerId: string,

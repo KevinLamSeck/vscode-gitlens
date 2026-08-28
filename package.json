@@ -4610,7 +4610,7 @@
 							"null"
 						],
 						"default": null,
-						"pattern": "^((anthropic|azure|deepseek|gemini|huggingface|mistral|ollama|openai|openaicompatible|openrouter|xai):([\\w.\\-:/]+)|gitkraken|vscode)$",
+						"pattern": "^((anthropic|azure|deepseek|gemini|huggingface|mistral|ollama|omniroute|openai|openaicompatible|openrouter|xai):([\\w.\\-:/@]+)|gitkraken|vscode)$",
 						"markdownDescription": "Specifies the AI provider and model to use for GitLens' AI features. Should be formatted as `provider:model` (e.g. `openai:gpt-5.5` or `anthropic:claude-sonnet-5`), `gitkraken` for GitKraken AI provided models, or `vscode` for models provided by the VS Code extension API (e.g. Copilot)",
 						"scope": "window",
 						"order": 10,
@@ -4694,6 +4694,111 @@
 						"markdownDescription": "Specifies a custom URL to use for access to an OpenAI-compatible model.",
 						"scope": "window",
 						"order": 33,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.omniroute.url": {
+						"type": [
+							"string",
+							"null"
+						],
+						"default": null,
+						"markdownDescription": "Specifies the OmniRoute gateway URL to use for access. Defaults to `http://localhost:20128/v1` when unset.",
+						"scope": "window",
+						"order": 34,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.providerSort": {
+						"type": [
+							"string",
+							"null"
+						],
+						"enum": [
+							null,
+							"price",
+							"throughput",
+							"latency"
+						],
+						"enumDescriptions": [
+							"Use OpenRouter's default (load-balanced) routing",
+							"Prefer the cheapest provider",
+							"Prefer the highest-throughput provider",
+							"Prefer the lowest-latency provider"
+						],
+						"default": null,
+						"markdownDescription": "Specifies how OpenRouter should rank providers when routing a request. Setting this disables load balancing.",
+						"scope": "window",
+						"order": 35,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.order": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"markdownDescription": "Specifies the OpenRouter provider slugs to try, in order (e.g. `anthropic`, `openai`). Setting this disables load balancing.",
+						"scope": "window",
+						"order": 36,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.only": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"markdownDescription": "Specifies the only OpenRouter provider slugs allowed to serve requests",
+						"scope": "window",
+						"order": 37,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.ignore": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"default": [],
+						"markdownDescription": "Specifies the OpenRouter provider slugs to never route requests to",
+						"scope": "window",
+						"order": 38,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.allowFallbacks": {
+						"type": "boolean",
+						"default": true,
+						"markdownDescription": "Specifies whether OpenRouter may fall back to other providers when the preferred ones are unavailable",
+						"scope": "window",
+						"order": 39,
+						"tags": [
+							"preview"
+						]
+					},
+					"gitlens.ai.openrouter.dataCollection": {
+						"type": "string",
+						"enum": [
+							"allow",
+							"deny"
+						],
+						"enumDescriptions": [
+							"Allow providers that may store prompts",
+							"Only use providers that don't store prompts"
+						],
+						"default": "allow",
+						"markdownDescription": "Specifies whether OpenRouter may route to providers that collect and store prompt data",
+						"scope": "window",
+						"order": 40,
 						"tags": [
 							"preview"
 						]
