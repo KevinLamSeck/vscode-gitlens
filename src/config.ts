@@ -288,11 +288,22 @@ interface AIConfig {
 	readonly ollama: {
 		readonly url: string | null;
 	};
+	readonly omniroute: {
+		readonly url: string | null;
+	};
 	readonly openai: {
 		readonly url: string | null;
 	};
 	readonly openaicompatible: {
 		readonly url: string | null;
+	};
+	readonly openrouter: {
+		readonly allowFallbacks: boolean;
+		readonly dataCollection: 'allow' | 'deny';
+		readonly ignore: string[];
+		readonly only: string[];
+		readonly order: string[];
+		readonly providerSort: 'price' | 'throughput' | 'latency' | null;
 	};
 	readonly vscode: {
 		readonly model: AIProviderAndModel | null;

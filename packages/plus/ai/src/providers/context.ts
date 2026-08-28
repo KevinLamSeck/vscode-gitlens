@@ -1,3 +1,13 @@
+/** OpenRouter provider-routing preferences, sourced from the host's settings */
+export interface AIOpenRouterRouting {
+	allowFallbacks?: boolean;
+	dataCollection?: 'allow' | 'deny';
+	ignore?: string[];
+	only?: string[];
+	order?: string[];
+	sort?: 'price' | 'throughput' | 'latency';
+}
+
 export interface AIProviderContext {
 	defaultTemperature?: number;
 
@@ -15,6 +25,9 @@ export interface AIProviderContext {
 	): Promise<string | undefined>;
 
 	getProviderConfig(type: string): { enabled: boolean; key?: string; url?: string };
+
+	/** Read fresh on every request so a settings edit takes effect without re-creating the context */
+	getOpenRouterRouting?(): AIOpenRouterRouting | undefined;
 
 	getOrPromptUrl(
 		providerId: string,
