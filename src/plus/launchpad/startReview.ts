@@ -1,5 +1,5 @@
 import type { QuickPick } from 'vscode';
-import { l10n, Uri, window } from 'vscode';
+import { l10n, Uri } from 'vscode';
 import type { GitBranch } from '@gitlens/git/models/branch.js';
 import type { PullRequest } from '@gitlens/git/models/pullRequest.js';
 import type { GitWorktree } from '@gitlens/git/models/worktree.js';
@@ -13,6 +13,7 @@ import type {
 	AsyncStepResultGenerator,
 	PartialStepState,
 	StepGenerator,
+	StepResult,
 	StepsContext,
 	StepSelection,
 	StepState,
@@ -31,9 +32,8 @@ import { ensureAccessStep, getAccessGateErrorMessage } from '../../commands/quic
 import { StepsController } from '../../commands/quick-wizard/stepsController.js';
 import { canPickStepContinue, createPickStep } from '../../commands/quick-wizard/utils/steps.utils.js';
 import { proBadge } from '../../constants.js';
-import type { Source } from '../../constants.telemetry.js';
+import type { Source, Sources } from '../../constants.telemetry.js';
 import type { Container } from '../../container.js';
-import { getPresentableErrorMessage } from '../../errors.js';
 import type { ConnectMoreIntegrationsItem } from '../../quickpicks/integrationPicker.js';
 import {
 	getOpenOnGitProviderQuickInputButtons,
@@ -48,14 +48,15 @@ import { executeCommand } from '../../system/-webview/command.js';
 import { openUrl } from '../../system/-webview/vscode/uris.js';
 import type { AgentDescriptor, AgentRoute } from '../agents/agentDescriptor.js';
 import type { ResolveAgentFlowResult } from '../agents/agentPicker.js';
-import { buildAgentResolvedTelemetryData, resolveAgentFlow } from '../agents/agentPicker.js';
+import { buildAgentResolvedTelemetryData, getRequestedAgentRoute, resolveAgentFlow } from '../agents/agentPicker.js';
 import { ensureIntegrationConnectAllowed } from '../integrations/utils/-webview/integration.utils.js';
+import { findKeplerRepoPathForPullRequest, getKeplerRepoPath, startKeplerTask } from '../kepler/keplerTask.js';
 import type { LaunchpadCategorizedResult, LaunchpadItem } from './launchpadProvider.js';
 import { getLaunchpadItemIdHash, supportedLaunchpadIntegrations } from './launchpadProvider.js';
 import {
-	getStartReviewProtocolError,
+	failStartReview,
 	StartReviewError,
-	startReviewFromLaunchpadItem,
+	startReviewFromLaunchpadItemDetached,
 } from './utils/-webview/startReview.utils.js';
 
 export interface StartReviewTelemetryContext {
@@ -66,7 +67,7 @@ export interface StartReviewTelemetryContext {
 
 export interface StartReviewCommandArgs {
 	readonly command: 'startReview';
-	source?: Source;
+	source?: Sources | Source;
 
 	// Pre-select PR by URL (skips PR picker)
 	prUrl?: string;
@@ -82,6 +83,8 @@ export interface StartReviewCommandArgs {
 	//   - `'manual'` : force manual — skip chat hand-off entirely, regardless of persisted setting
 	//   - `'agent'`  : force agent — skip the pre-picker and go straight to the agent picker (or the
 	//                  persisted `gitlens.ai.defaultAgent` if set and available)
+	//   - `'kepler'` : hand off to Kepler without creating a branch/worktree, or ask when Kepler
+	//                  can't serve this item
 	//   - undefined  : do not run the new flow; legacy `openChatOnComplete` behavior applies
 	showOpenInAgent?: AgentRoute;
 
@@ -90,6 +93,48 @@ export interface StartReviewCommandArgs {
 
 	// Result tracking for programmatic usage
 	result?: Deferred<{ branch: GitBranch; worktree?: GitWorktree; pr: PullRequest }>;
+}
+
+/**
+ * How Start Review proceeds once the route is resolved. Only `'review'` carries what
+ * `startReviewFromLaunchpadItem` needs, so a caller can't reach it without first ruling out the
+ * other kinds.
+ */
+export type StartReviewDispatch =
+	| {
+			readonly kind: 'review';
+			readonly agent: AgentDescriptor | undefined;
+			readonly openChatOnComplete: boolean | undefined;
+	  }
+	/** Already handed off to Kepler, which creates its own worktree — nothing more to do here */
+	| { readonly kind: 'kepler' }
+	| { readonly kind: 'cancel' };
+
+/**
+ * Starts the review for a resolved dispatch, or settles `result` without starting one. This is the
+ * ONE way both Start Review entry paths (a pre-selected `prUrl`, and the PR picker) reach
+ * `startReviewFromLaunchpadItem` — the call that creates the branch/worktree — so a Kepler hand-off
+ * can't fall through to creating a second worktree on either path. A started review is detached and
+ * settles `result` itself. Returns whether a review was started.
+ */
+export function runStartReviewDispatch<T>(
+	dispatch: StepResult<StartReviewDispatch>,
+	result: Deferred<T> | undefined,
+	startReview: (agent: AgentDescriptor | undefined, openChatOnComplete: boolean | undefined) => void,
+): boolean {
+	if (dispatch === StepResultBreak || dispatch.kind === 'cancel') {
+		result?.cancel(new Error('Start Review cancelled'));
+		return false;
+	}
+
+	if (dispatch.kind === 'kepler') {
+		// No branch/worktree exists to fulfill with; say why rather than a generic "cancelled"
+		result?.cancel(new Error('Start Review was handed off to Kepler'));
+		return false;
+	}
+
+	startReview(dispatch.agent, dispatch.openChatOnComplete);
+	return true;
 }
 
 const instanceCounter = getScopedCounter();
@@ -165,7 +210,7 @@ export class StartReviewCommand extends QuickCommand<StartReviewState> {
 			description: l10n.t('Start a review for a pull request'),
 		});
 
-		this.source = args?.source ?? { source: 'commandPalette' };
+		this.source = typeof args?.source === 'object' ? args.source : { source: args?.source ?? 'commandPalette' };
 
 		if (this.container.telemetry.enabled) {
 			this.telemetryContext = {
@@ -185,7 +230,7 @@ export class StartReviewCommand extends QuickCommand<StartReviewState> {
 			instructions: args?.instructions,
 			useDefaults: args?.useDefaults,
 			openChatOnComplete: args?.openChatOnComplete,
-			showOpenInAgent: args?.showOpenInAgent,
+			showOpenInAgent: getRequestedAgentRoute(args),
 			result: args?.result,
 		};
 	}
@@ -313,40 +358,39 @@ export class StartReviewCommand extends QuickCommand<StartReviewState> {
 
 					// Auto-select PR if prUrl is provided
 					if (state.prUrl && state.useDefaults) {
-						// Lookup the LaunchpadItem from the URL, then execute the review
+						// Lookup the LaunchpadItem from the URL - this can throw synchronously before
+						// the review starts, so it keeps its own try/catch
+						let launchpadItem: LaunchpadItem;
 						try {
-							const launchpadItem = await this.lookupLaunchpadItem(state.prUrl);
-							if (launchpadItem == null) {
+							const found = await this.lookupLaunchpadItem(state.prUrl);
+							if (found == null) {
 								throw new StartReviewError(
 									`No PR found matching '${state.prUrl}'`,
 									l10n.t("No PR found matching '{url}'", { url: state.prUrl }),
 								);
 							}
 
-							const agentDispatch = yield* this.resolveAgentDispatch(state, context);
-							if (agentDispatch === StepResultBreak || agentDispatch === 'cancel') {
-								state.result?.cancel(new Error('Start Review cancelled'));
-								return;
-							}
-
-							const reviewResult = await startReviewFromLaunchpadItem(
-								this.container,
-								launchpadItem,
-								state.instructions,
-								agentDispatch.openChatOnComplete,
-								state.useDefaults,
-								agentDispatch.agent,
-							);
-							state.result?.fulfill(reviewResult);
-							steps.markStepsComplete();
-							return;
+							launchpadItem = found;
 						} catch (ex) {
-							state.result?.cancel(getStartReviewProtocolError(ex));
-							void window.showErrorMessage(
-								l10n.t('Failed to start review: {error}', { error: getPresentableErrorMessage(ex) }),
-							);
+							failStartReview(state.result, ex);
 							return StepResultBreak;
 						}
+
+						let dispatch;
+						try {
+							dispatch = yield* this.resolveAgentDispatch(state, context, launchpadItem);
+						} catch (ex) {
+							failStartReview(state.result, ex);
+							return StepResultBreak;
+						}
+
+						const started = runStartReviewDispatch(dispatch, state.result, (agent, openChatOnComplete) =>
+							this.detachReview(state, launchpadItem, agent, openChatOnComplete),
+						);
+						if (!started) return;
+
+						steps.markStepsComplete();
+						return;
 					}
 
 					// Otherwise, show the PR picker
@@ -375,29 +419,19 @@ export class StartReviewCommand extends QuickCommand<StartReviewState> {
 				assertsStartReviewStepState(state);
 
 				// Execute the review using the LaunchpadItem directly (avoids redundant PR lookup)
+				const { launchpadItem } = state.item;
+				let dispatch;
 				try {
-					const agentDispatch = yield* this.resolveAgentDispatch(state, context);
-					if (agentDispatch === StepResultBreak || agentDispatch === 'cancel') {
-						state.result?.cancel(new Error('Start Review cancelled'));
-						return;
-					}
-
-					const reviewResult = await startReviewFromLaunchpadItem(
-						this.container,
-						state.item.launchpadItem,
-						state.instructions,
-						agentDispatch.openChatOnComplete,
-						state.useDefaults,
-						agentDispatch.agent,
-					);
-					state.result?.fulfill(reviewResult);
+					dispatch = yield* this.resolveAgentDispatch(state, context, launchpadItem);
 				} catch (ex) {
-					state.result?.cancel(getStartReviewProtocolError(ex));
-					void window.showErrorMessage(
-						l10n.t('Failed to start review: {error}', { error: getPresentableErrorMessage(ex) }),
-					);
+					failStartReview(state.result, ex);
 					return StepResultBreak;
 				}
+
+				const started = runStartReviewDispatch(dispatch, state.result, (agent, openChatOnComplete) =>
+					this.detachReview(state, launchpadItem, agent, openChatOnComplete),
+				);
+				if (!started) return;
 
 				steps.markStepsComplete();
 			}
@@ -411,45 +445,91 @@ export class StartReviewCommand extends QuickCommand<StartReviewState> {
 	}
 
 	/**
+	 * Detaches the review from the wizard lifetime: the wizard completes before any of the review's own
+	 * UI (progress, locate/clone prompt) can appear — a standalone quick pick shown while the wizard's
+	 * picker is still live silently tears the wizard down (unfrozen onDidHide). The detached promise
+	 * settles the result deferred, so `state.result` is cleared first to keep the steps' `finally` from
+	 * cancelling it as still-pending.
+	 */
+	private detachReview(
+		state: StartReviewState,
+		item: LaunchpadItem,
+		agent: AgentDescriptor | undefined,
+		openChatOnComplete: boolean | undefined,
+	): void {
+		const result = state.result;
+		state.result = undefined;
+		startReviewFromLaunchpadItemDetached(
+			this.container,
+			item,
+			state.instructions,
+			openChatOnComplete,
+			state.useDefaults,
+			agent,
+			result,
+		);
+	}
+
+	/**
 	 * Resolves the manual-vs-agent flow before kicking off the review. When `showOpenInAgent` is set,
 	 * this calls the orchestrator which either dispatches directly (persisted defaults), prompts the
 	 * user (interactive), or falls back to manual (`useDefaults: true` contract).
 	 *
-	 * Returns `'cancel'` when the user backs out of the wizard; otherwise the resolved `agent`
-	 * descriptor (or undefined for manual) along with the effective `openChatOnComplete` flag.
+	 * Returns `'cancel'` when the user backs out of the wizard, and `'kepler'` once the task has been
+	 * handed off to Kepler (started here, so neither caller can forget to); otherwise `'review'` with
+	 * the resolved `agent` descriptor (or undefined for manual) and the effective `openChatOnComplete`.
+	 * Pass the result to {@link runStartReviewDispatch}.
 	 */
 	private async *resolveAgentDispatch(
 		state: StartReviewState,
 		context: StartReviewContext,
-	): AsyncStepResultGenerator<
-		'cancel' | { agent: AgentDescriptor | undefined; openChatOnComplete: boolean | undefined }
-	> {
+		launchpadItem: LaunchpadItem,
+	): AsyncStepResultGenerator<StartReviewDispatch> {
 		// `state.showOpenInAgent` is the caller-supplied route override:
 		//   undefined → legacy behavior; honor `openChatOnComplete` (sends to host IDE chat)
 		//   'ask' / 'manual' / 'agent' → run the new flow with that route override
 		// Defense-in-depth: skip the agent flow entirely when AI is disabled (org or user setting),
 		// even if a caller passed `showOpenInAgent`. UI surfaces gate, but the wizard enforces too.
 		if (state.showOpenInAgent == null || !this.container.ai.allowed) {
-			return { agent: undefined, openChatOnComplete: state.openChatOnComplete };
+			return { kind: 'review', agent: undefined, openChatOnComplete: state.openChatOnComplete };
 		}
+
+		const pr = launchpadItem.underlyingPullRequest;
 
 		// yield* so the picker steps go through the wizard machinery (avoid collision with the
 		// wizard's still-alive picker from the PR selection step).
 		const flow = yield* resolveAgentFlow(this.container, {
 			useDefaults: state.useDefaults,
 			requestedRoute: state.showOpenInAgent,
+			item: { kind: 'pr', providerId: pr.provider.id },
 		});
-		if (flow === StepResultBreak) return 'cancel';
+		if (flow === StepResultBreak) return { kind: 'cancel' };
 
 		this.sendAgentResolvedTelemetry(flow, context);
 
 		switch (flow.kind) {
 			case 'cancel':
-				return 'cancel';
+				return { kind: 'cancel' };
 			case 'manual':
-				return { agent: undefined, openChatOnComplete: false };
+				return { kind: 'review', agent: undefined, openChatOnComplete: false };
 			case 'agent':
-				return { agent: flow.descriptor, openChatOnComplete: true };
+				return { kind: 'review', agent: flow.descriptor, openChatOnComplete: true };
+			case 'kepler':
+				await startKeplerTask(
+					this.container,
+					{
+						intent: 'start-review',
+						item: { kind: 'pr', url: pr.url, provider: { id: pr.provider.id, name: pr.provider.name } },
+						// Launchpad only knows the repo when it is an open workspace folder
+						repoPath: getKeplerRepoPath(
+							this.container,
+							launchpadItem.openRepository?.repo.path ??
+								(await findKeplerRepoPathForPullRequest(this.container, pr)),
+						),
+					},
+					this.source,
+				);
+				return { kind: 'kepler' };
 		}
 	}
 

@@ -80,9 +80,9 @@ export class GlGraphOverview extends SignalWatcher(LitElement) {
 				padding-inline: var(--gl-space-4);
 				margin-block: 0 var(--gl-space-4);
 				font-size: var(--gl-font-sm);
-				font-weight: normal;
+				font-weight: var(--gl-font-weight-regular);
 				color: var(--vscode-descriptionForeground);
-				text-transform: uppercase;
+				text-transform: var(--gl-view-header-text-transform);
 			}
 
 			.group__header {
@@ -166,7 +166,7 @@ export class GlGraphOverview extends SignalWatcher(LitElement) {
 				padding-inline: var(--gl-space-4);
 				margin-block: 0 var(--gl-space-2);
 				font-size: var(--gl-font-micro);
-				font-weight: normal;
+				font-weight: var(--gl-font-weight-regular);
 				color: var(--vscode-descriptionForeground);
 				text-transform: uppercase;
 				opacity: 0.8;

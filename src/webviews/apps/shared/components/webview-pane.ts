@@ -70,8 +70,9 @@ export class WebviewPane extends LitElement {
 				min-width: 0;
 				overflow: hidden;
 				text-overflow: ellipsis;
-				font-weight: bold;
-				text-transform: uppercase;
+				font-size: var(--gl-view-header-font-size, var(--gl-font-sm));
+				font-weight: var(--gl-view-header-font-weight, bold);
+				text-transform: var(--gl-view-header-text-transform);
 				white-space: nowrap;
 			}
 
@@ -89,7 +90,7 @@ export class WebviewPane extends LitElement {
 
 			.icon {
 				margin: 0 var(--gl-space-2);
-				font-weight: normal;
+				font-weight: var(--gl-font-weight-regular);
 			}
 
 			.content {

@@ -221,7 +221,7 @@ export const featureGateContentStyles = css`
 		align-items: baseline;
 		margin: 0;
 		font-size: 1.6rem;
-		font-weight: 600;
+		font-weight: var(--gl-font-weight-semibold);
 		line-height: 1.2;
 		color: var(--color-foreground);
 	}
@@ -244,6 +244,41 @@ export const featureGateContentStyles = css`
 	.feature__sub {
 		margin: 0;
 		font-size: var(--gl-font-md);
+	}
+
+	/* .feature is a flex column with its own gap (see above), so this callout needs no margin of its
+	   own — the gap already separates it from .feature__header and .feature__sub. */
+	.feature__promise {
+		display: flex;
+		gap: var(--gl-space-8);
+		align-items: flex-start;
+		padding: var(--gl-space-8) var(--gl-space-12);
+		margin: 0;
+		font-size: var(--gl-font-md);
+		line-height: 1.4;
+		color: var(--color-foreground--85);
+		text-wrap: pretty;
+		background: color-mix(in lab, var(--vscode-editor-background) 100%, var(--vscode-foreground) 12%);
+		border-inline-start: 0.2rem solid var(--color-alert-infoBorder);
+		border-radius: var(--gl-radius-sm);
+	}
+
+	.feature__promise code-icon {
+		flex: none;
+		color: var(--color-alert-infoBorder);
+	}
+
+	/* A flex item defaults to min-width:auto, so without this the text can't shrink below its longest
+	   unbreakable run and a deep file path pushes out of the callout. */
+	.feature__promise > span {
+		min-inline-size: 0;
+	}
+
+	.feature__promise__subject {
+		font-family: var(--vscode-editor-font-family);
+		/* File paths have no ordinary break opportunities, so they must be able to break mid-token —
+		   anywhere only kicks in when the line would otherwise overflow. */
+		overflow-wrap: anywhere;
 	}
 
 	.list {

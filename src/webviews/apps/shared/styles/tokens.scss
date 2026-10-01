@@ -6,12 +6,21 @@
 
 :root {
 	// Font-size scale (1rem = 10px via html font-size: 62.5%). The 11/12/13 steps bridge to VS Code's
-	// bodyFontSize tokens (1.110+) and fall back to rem; micro/lg are bespoke (VS Code has no equivalent).
+	// fontSize ramp (1.129+), then its deprecated bodyFontSize tokens (1.110+), then rem; micro/lg are
+	// bespoke (VS Code has no equivalent).
 	--gl-font-micro: 1rem; // 10px — tiny badge counts only (bespoke)
-	--gl-font-sm: var(--vscode-bodyFontSize-xSmall, 1.1rem); // 11px — secondary metadata, dates, stats, chips
-	--gl-font-md: var(--vscode-bodyFontSize-small, 1.2rem); // 12px — most-used; was --gl-font-small
-	--gl-font-base: var(--vscode-bodyFontSize, 1.3rem); // 13px — primary body text, messages, controls
+	--gl-font-sm: var(--vscode-fontSize-body2, var(--vscode-bodyFontSize-xSmall, 1.1rem)); // 11px — secondary metadata, dates, stats, chips
+	--gl-font-md: var(--vscode-fontSize-label1, var(--vscode-bodyFontSize-small, 1.2rem)); // 12px — most-used; was --gl-font-small
+	--gl-font-base: var(--vscode-fontSize-body1, var(--vscode-bodyFontSize, 1.3rem)); // 13px — primary body text, messages, controls
 	--gl-font-lg: 1.4rem; // 14px — emphasized headline (commit message subject) (bespoke)
+
+	// Font-weight ramp — bridges to VS Code's fontWeight tokens (1.129+). VS Code's ramp has only these two
+	// steps; other weights in use (500, 700) are bespoke and stay literal.
+	--gl-font-weight-regular: var(--vscode-fontWeight-regular, 400);
+	--gl-font-weight-semibold: var(--vscode-fontWeight-semiBold, 600);
+
+	// Casing for GitLens headers that imitate VS Code's native view/section headers; follows Modern UI (see below)
+	--gl-view-header-text-transform: uppercase;
 
 	// Input max-width (AI input / action input)
 	--gl-max-input: 560px;
@@ -100,4 +109,17 @@
 		0 4px 12px -4px color-mix(in srgb, var(--gl-shadow-color) 95%, transparent),
 		0 12px 28px -8px color-mix(in srgb, var(--gl-shadow-color) 55%, transparent);
 	--gl-shadow-tooltip: 0 2px 8px var(--vscode-widget-shadow); // single-layer, byte-identical to VS Code's native hover
+}
+
+// Modern UI sets native view headers in Label 1 (12px) at semibold, and capitalizes them unless the user opts back
+// into uppercase (mirrors VS Code's fontRamp.css). The size, weight and letter-spacing tokens are only defined here,
+// so each header keeps its own classic value as its var() fallback when Modern UI is off.
+body[data-modern-ui] {
+	--gl-view-header-font-size: var(--gl-font-md);
+	--gl-view-header-font-weight: var(--gl-font-weight-semibold);
+}
+
+body[data-modern-ui]:not([data-modern-ui-uppercase-view-headers]) {
+	--gl-view-header-text-transform: capitalize;
+	--gl-view-header-letter-spacing: normal;
 }

@@ -44,6 +44,10 @@ declare global {
 			/** The dispatcher already confirmed the blast radius in place (the sheet's popover). */
 			confirmed?: boolean;
 		}>;
+		/** Rebases every branch of the pull request's stack, bottom to top — the Rebase Stack split
+		 *  button. `ai` opts into AI conflict resolution (Auto-Rebase Stack). Unlike merge, the host
+		 *  command always confirms via its own quick pick, so there's no `confirmed` flag here. */
+		'gl-graph-rebase-stack': CustomEvent<{ number: string; ai?: boolean }>;
 		/** Opens another layer's sheet — `push: true` stacks it on top of this one rather than replacing
 		 *  it, so closing returns here. `stackNumber` opens the stack-root summary sheet instead of a
 		 *  single layer's. `url` is the fallback when sheet resolution fails — open the pull request on
@@ -175,12 +179,12 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 			.title__link:focus-visible {
 				outline: var(--gl-border-width) solid var(--vscode-focusBorder);
 				outline-offset: 0.2rem;
-				border-radius: 0.2rem;
+				border-radius: var(--gl-radius-xs);
 			}
 
 			.title__id {
 				flex: none;
-				font-weight: 400;
+				font-weight: var(--gl-font-weight-regular);
 				font-variant-numeric: tabular-nums;
 				color: var(--color-foreground--65);
 			}
@@ -194,7 +198,7 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 				height: 1.5rem;
 				padding: 0 var(--gl-space-4);
 				font-size: var(--gl-font-micro);
-				font-weight: 400;
+				font-weight: var(--gl-font-weight-regular);
 				font-variant-numeric: tabular-nums;
 				line-height: 1;
 				color: var(--color-foreground--65);
@@ -218,7 +222,7 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 
 			.subtitle__state {
 				flex: none;
-				font-weight: 600;
+				font-weight: var(--gl-font-weight-semibold);
 			}
 
 			.subtitle__author {
@@ -331,7 +335,7 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 
 			/* The heading row's right-side annotation keeps normal casing. */
 			.section-label__aside {
-				font-weight: 400;
+				font-weight: var(--gl-font-weight-regular);
 				text-transform: none;
 				letter-spacing: normal;
 			}
@@ -471,9 +475,18 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 				justify-content: space-between;
 			}
 
+			/* Groups the Merge Stack and Rebase Stack split buttons so they read as one cluster against
+			   the title, rather than spreading across the head row's own space-between. */
+			.verdict__actions {
+				display: flex;
+				flex: none;
+				gap: var(--gl-space-6);
+				align-items: center;
+			}
+
 			.verdict__title {
 				align-self: center;
-				font-weight: 600;
+				font-weight: var(--gl-font-weight-semibold);
 				line-height: 1.2;
 				color: var(--verdict-accent);
 			}
@@ -721,7 +734,7 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 			}
 
 			.stack-rail__position--current {
-				font-weight: 600;
+				font-weight: var(--gl-font-weight-semibold);
 				color: var(--color-foreground);
 			}
 		`,
@@ -1457,10 +1470,24 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 		if (pr.state === 'merged') return this.renderVerdictMerged(pr);
 		if (pr.state !== 'opened') return nothing;
 
+		const conflicting = pr.mergeableState === 'Conflicting' || pr.launchpad?.hasConflicts === true;
+		// Rebase is worth offering when the stack has drifted from what it targets — behind its trunk, or
+		// already conflicting with it. An up-to-date stack would replay to identical tips, so advertising
+		// the cascade there invites a run that does nothing. `undefined` is unknown, not zero: fail open.
+		const offerRebase = pr.stack != null && (pr.stack.behind == null || pr.stack.behind > 0 || conflicting);
+
 		if (pr.isDraft) {
 			return html`<div class="verdict verdict--draft">
 				<div class="verdict__head">
 					<span class="verdict__title">${l10n.t('Draft — not ready to merge')}</span>
+					${
+						// Draft gates MERGING, not rebasing — a stack is most often rebased while it's still
+						// draft and the trunk keeps moving underneath it. Hiding the cascade here would
+						// withhold it for the case it's most needed.
+						offerRebase && pr.stack != null
+							? html`<span class="verdict__actions">${this.renderRebaseStackControl(pr.stack)}</span>`
+							: nothing
+					}
 				</div>
 				<div class="verdict__reasons">
 					<span
@@ -1471,18 +1498,18 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 			</div>`;
 		}
 
-		const conflicting = pr.mergeableState === 'Conflicting' || pr.launchpad?.hasConflicts;
 		const stack = pr.stack;
 		const impact = stack != null ? this.computeStackImpact(stack) : undefined;
 		return conflicting
-			? this.renderVerdictConflicting(pr, stack, impact)
-			: this.renderVerdictReady(pr, stack, impact);
+			? this.renderVerdictConflicting(pr, stack, impact, offerRebase)
+			: this.renderVerdictReady(pr, stack, impact, offerRebase);
 	}
 
 	private renderVerdictReady(
 		pr: GraphSidebarPullRequest,
 		stack: PrStack | undefined,
 		impact: ReturnType<GlGraphPrSheet['computeStackImpact']>,
+		offerRebase: boolean,
 	) {
 		const count = getStackedMergeCount(stack, { wholeStack: this.stackRoot });
 		// GitHub's own stacked button reads "Merge stack" with the count as a badge, not prose.
@@ -1496,29 +1523,32 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 		return html`<div class="verdict verdict--ready">
 			<div class="verdict__head">
 				<span class="verdict__title">${l10n.t('Ready to merge')}</span>
-				<span class="split-btn">
-					<gl-popover-confirm
-						heading=${count > 1 ? l10n.t('Merge Stack') : l10n.t('Merge Pull Request')}
-						message=${this.mergeConfirmMessage(pr, count)}
-						confirm=${this.mergeConfirmLabel(count)}
-						placement="top-end"
-						@gl-confirm=${this.onMergeConfirmed}
-						@gl-cancel=${this.onMergeCancelled}
-					>
-						<gl-button class="split-btn__main" slot="anchor">${label}</gl-button>
-					</gl-popover-confirm>
-					<gl-menu-popover
-						.items=${[
-							{ label: l10n.t('Squash and Merge...'), value: 'squash' },
-							{ label: l10n.t('Rebase and Merge...'), value: 'rebase' },
-							{ label: l10n.t('Create a Merge Commit...'), value: 'merge' },
-						]}
-						@gl-menu-select=${this.onMergeMethodSelect}
-					>
-						<gl-button class="split-btn__menu" slot="anchor" aria-label=${l10n.t('Merge Options')}>
-							<code-icon icon="chevron-down"></code-icon>
-						</gl-button>
-					</gl-menu-popover>
+				<span class="verdict__actions">
+					<span class="split-btn">
+						<gl-popover-confirm
+							heading=${count > 1 ? l10n.t('Merge Stack') : l10n.t('Merge Pull Request')}
+							message=${this.mergeConfirmMessage(pr, count)}
+							confirm=${this.mergeConfirmLabel(count)}
+							placement="top-end"
+							@gl-confirm=${this.onMergeConfirmed}
+							@gl-cancel=${this.onMergeCancelled}
+						>
+							<gl-button class="split-btn__main" slot="anchor">${label}</gl-button>
+						</gl-popover-confirm>
+						<gl-menu-popover
+							.items=${[
+								{ label: l10n.t('Squash and Merge...'), value: 'squash' },
+								{ label: l10n.t('Rebase and Merge...'), value: 'rebase' },
+								{ label: l10n.t('Create a Merge Commit...'), value: 'merge' },
+							]}
+							@gl-menu-select=${this.onMergeMethodSelect}
+						>
+							<gl-button class="split-btn__menu" slot="anchor" aria-label=${l10n.t('Merge Options')}>
+								<code-icon icon="chevron-down"></code-icon>
+							</gl-button>
+						</gl-menu-popover>
+					</span>
+					${offerRebase && stack != null ? this.renderRebaseStackControl(stack) : nothing}
 				</span>
 			</div>
 			<div class="verdict__reasons">${this.renderChecksReason(pr)} ${this.renderNoConflictsReason(pr)}</div>
@@ -1526,10 +1556,38 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 		</div>`;
 	}
 
+	/** The Rebase Stack split button, beside Merge Stack — always rebases the WHOLE stack bottom to
+	 *  top (unlike merge, position doesn't limit it), so the badge count is always the stack size.
+	 *  Dispatches straight through rather than confirming in place: the host command
+	 *  (`gitlens.git.rebaseStack` / `gitlens.ai.autoRebaseStack`) always shows its own confirmation
+	 *  quick pick, so a second confirmation here would be redundant. */
+	private renderRebaseStackControl(stack: PrStack) {
+		const count = getStackedMergeCount(stack, { wholeStack: true });
+		const label =
+			count > 1
+				? localizedContent(l10n.t('Rebase Stack...{count}'), {
+						count: html`<span class="split-btn__count">${count}</span>`,
+					})
+				: l10n.t('Rebase Pull Request...');
+
+		return html`<span class="split-btn">
+			<gl-button class="split-btn__main" @click=${this.onRebaseStackClick}>${label}</gl-button>
+			<gl-menu-popover
+				.items=${[{ label: l10n.t('Auto-Rebase Stack...'), value: 'ai' }]}
+				@gl-menu-select=${this.onAutoRebaseStackSelect}
+			>
+				<gl-button class="split-btn__menu" slot="anchor" aria-label=${l10n.t('Rebase Options')}>
+					<code-icon icon="chevron-down"></code-icon>
+				</gl-button>
+			</gl-menu-popover>
+		</span>`;
+	}
+
 	private renderVerdictConflicting(
 		pr: GraphSidebarPullRequest,
 		stack: PrStack | undefined,
 		impact: ReturnType<GlGraphPrSheet['computeStackImpact']>,
+		offerRebase: boolean,
 	) {
 		const title =
 			pr.baseBranch != null
@@ -1538,6 +1596,13 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 		return html`<div class="verdict verdict--conflict">
 			<div class="verdict__head">
 				<span class="verdict__title">${title}</span>
+				${
+					// A conflicting stack is exactly when rebasing it is worth offering — the cascade
+					// replays each layer onto the one below it, which is what clears the conflict.
+					offerRebase && stack != null
+						? html`<span class="verdict__actions">${this.renderRebaseStackControl(stack)}</span>`
+						: nothing
+				}
 			</div>
 			<div class="verdict__reasons">
 				<span><code-icon icon="close"></code-icon> ${l10n.t('Conflicting files')}</span>
@@ -1876,5 +1941,29 @@ export class GlGraphPrSheet extends SheetWrapper(LitElement) {
 		// Let the confirmation re-render with the strategy-specific label before it opens
 		await this.updateComplete;
 		void this._mergeConfirmEl?.show();
+	};
+
+	/** Shared by both Rebase Stack split-button halves — no in-place confirmation (see
+	 *  {@link renderRebaseStackControl}), so this dispatches straight through. */
+	private dispatchRebaseStack(ai: boolean): void {
+		const pr = this.pullRequest;
+		if (pr == null) return;
+
+		this.dispatchEvent(
+			new CustomEvent('gl-graph-rebase-stack', {
+				detail: ai ? { number: pr.number, ai: true } : { number: pr.number },
+				bubbles: true,
+				composed: true,
+			}),
+		);
+	}
+
+	private onRebaseStackClick = (e: Event): void => {
+		e.stopPropagation();
+		this.dispatchRebaseStack(false);
+	};
+
+	private onAutoRebaseStackSelect = (): void => {
+		this.dispatchRebaseStack(true);
 	};
 }
